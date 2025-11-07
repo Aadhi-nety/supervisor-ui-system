@@ -2,8 +2,6 @@
 
 A Flask-based web application that helps supervisors manage customer service requests with AI assistance.
 
-## Video https://drive.google.com/file/d/1twyrW1IkVWWjqfvSmrwGbnWEBHDihDH8/view?usp=drive_link
-
 ## Features
 
 - **Dashboard**: Overview of pending/resolved requests and knowledge base
@@ -81,3 +79,4 @@ Design Decisions:
 - Real-time Updates - WebSocket notifications
 - Docker Deployment - Containerization
 - API Rate Limiting - Abuse protection
+
