@@ -1,0 +1,66 @@
+﻿from datetime import datetime, timedelta
+from enum import Enum
+from typing import Optional
+import uuid
+
+class RequestStatus(str, Enum):
+    PENDING = 'pending'
+    RESOLVED = 'resolved'
+    UNRESOLVED = 'unresolved'
+    TIMEOUT = 'timeout'
+
+class HelpRequest:
+    def __init__(
+        self,
+        customer_phone: str,
+        question: str,
+        context: str = '',
+        id: Optional[str] = None,
+        status: RequestStatus = RequestStatus.PENDING,
+        created_at: Optional[datetime] = None,
+        resolved_at: Optional[datetime] = None,
+        supervisor_answer: Optional[str] = None,
+        timeout_minutes: int = 60
+    ):
+        self.id = id or str(uuid.uuid4())
+        self.customer_phone = customer_phone
+        self.question = question
+        self.context = context
+        self.status = status
+        self.created_at = created_at or datetime.utcnow()
+        self.resolved_at = resolved_at
+        self.supervisor_answer = supervisor_answer
+        self.timeout_minutes = timeout_minutes
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'customer_phone': self.customer_phone,
+            'question': self.question,
+            'context': self.context,
+            'status': self.status,
+            'created_at': self.created_at.isoformat(),
+            'resolved_at': self.resolved_at.isoformat() if self.resolved_at else None,
+            'supervisor_answer': self.supervisor_answer,
+            'is_timed_out': self.is_timed_out(),
+            'timeout_minutes': self.timeout_minutes
+        }
+    
+    def is_timed_out(self) -> bool:
+        if self.status != RequestStatus.PENDING:
+            return False
+        return (datetime.utcnow() - self.created_at) > timedelta(minutes=self.timeout_minutes)
+    
+    def resolve(self, answer: str):
+        self.status = RequestStatus.RESOLVED
+        self.supervisor_answer = answer
+        self.resolved_at = datetime.utcnow()
+    
+    def mark_unresolved(self):
+        self.status = RequestStatus.UNRESOLVED
+        self.resolved_at = datetime.utcnow()
+    
+    def mark_timeout(self):
+        if self.status == RequestStatus.PENDING:
+            self.status = RequestStatus.TIMEOUT
+            self.resolved_at = datetime.utcnow()

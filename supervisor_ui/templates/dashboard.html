@@ -1,0 +1,199 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Supervisor Dashboard</title>
+
+  <!-- Bootstrap 5.3 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Font Awesome 6 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
+  <!-- Custom beauty layer -->
+  <style>
+    :root{
+      --primary:#6366f1;
+      --success:#10b981;
+      --warning:#f59e0b;
+      --danger:#ef4444;
+      --info:#3b82f6;
+      --bg:#f5f7fa;
+      --card:#ffffff;
+      --radius:1.25rem;
+      --shadow:0 6px 18px rgba(0,0,0,.06);
+      --transition:.3s ease;
+    }
+    body{background:var(--bg);font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;}
+    .navbar{
+      background:linear-gradient(135deg,var(--primary),#8b5cf6);
+      box-shadow:var(--shadow);
+    }
+    .navbar-brand{font-weight:600;font-size:1.15rem;}
+    .kpi-card{
+      background:var(--card);
+      border:none;border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      transition:transform var(--transition),box-shadow var(--transition);
+      text-align:center;
+    }
+    .kpi-card:hover{transform:translateY(-4px);box-shadow:0 12px 24px rgba(0,0,0,.08);}
+    .kpi-number{font-size:2.75rem;font-weight:700;line-height:1;}
+    .kpi-label{font-size:.9rem;color:#6b7280;letter-spacing:.5px;}
+
+    /* request cards look like chat bubbles */
+    .request-card{
+      background:var(--card);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      border-left:6px solid var(--warning);
+      transition:transform var(--transition),box-shadow var(--transition);
+      animation:fadeIn .6s ease forwards;
+      opacity:0;
+    }
+    .request-card:hover{transform:translateY(-3px);box-shadow:0 10px 22px rgba(0,0,0,.07);}
+    .request-card.resolved{border-left-color:var(--success);}
+    .request-card.knowledge{border-left-color:var(--info);}
+    @keyframes fadeIn{to{opacity:1;}}
+
+    .badge-pending{background:var(--warning);}
+    .badge-resolved{background:var(--success);}
+    .btn-respond{background:var(--primary);border:none;padding:.45rem .9rem;font-size:.875rem;border-radius:.5rem;}
+    .btn-respond:hover{background:#4f46e5;}
+    .empty-state{text-align:center;padding:3rem 1rem;color:#9ca3af;}
+    .empty-state i{font-size:2.5rem;margin-bottom:1rem;opacity:.45;}
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar navbar-expand-lg navbar-dark">
+  <div class="container">
+    <a class="navbar-brand" href="/"><i class="fa-solid fa-robot me-2"></i>AI Supervisor</a>
+    <span class="navbar-text text-white small">Auto-refreshes every 30 s</span>
+  </div>
+</nav>
+
+<!-- KPI row -->
+<div class="container py-5">
+  <div class="row g-4 mb-5">
+    <div class="col-md-4">
+      <div class="kpi-card p-4">
+        <div class="kpi-number text-warning">{{ stats.pending }}</div>
+        <div class="kpi-label">Pending Requests</div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="kpi-card p-4">
+        <div class="kpi-number text-success">{{ stats.resolved }}</div>
+        <div class="kpi-label">Resolved Requests</div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="kpi-card p-4">
+        <div class="kpi-number text-info">{{ stats.knowledge_entries }}</div>
+        <div class="kpi-label">Knowledge Entries</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pending -->
+  <section class="mb-5">
+    <h5 class="fw-bold mb-3"><i class="fa-solid fa-clock text-warning me-2"></i>Pending Help Requests</h5>
+    {% if pending_requests %}
+      <div class="row g-3">
+        {% for r in pending_requests %}
+        <div class="col-lg-6">
+          <div class="card request-card p-3">
+            <div class="d-flex justify-content-between align-items-start">
+              <div class="me-3">
+                <div class="fw-semibold mb-1">{{ r.question[:120] }}{% if r.question|length > 120 %}…{% endif %}</div>
+                <small class="text-muted"><i class="fa-solid fa-phone me-1"></i>{{ r.customer_phone }} &nbsp;&nbsp; <i class="fa-solid fa-calendar me-1"></i>{{ r.created_at.strftime('%d %b, %H:%M') }}</small>
+              </div>
+              <a href="/request/{{ r.id }}" class="btn btn-respond btn-sm"><i class="fa-solid fa-reply me-1"></i>Respond</a>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">No pending requests</div>
+    {% endif %}
+  </section>
+
+  <!-- Resolved -->
+  <section class="mb-5">
+    <h5 class="fw-bold mb-3"><i class="fa-solid fa-circle-check text-success me-2"></i>Recently Resolved</h5>
+    {% if resolved_requests %}
+      <div class="row g-3">
+        {% for r in resolved_requests %}
+        <div class="col-lg-6">
+          <div class="card request-card resolved p-3">
+            <div class="fw-semibold mb-1">{{ r.question[:120] }}{% if r.question|length > 120 %}…{% endif %}</div>
+            <small class="text-muted">Answer: {{ r.supervisor_answer[:100] }}{% if r.supervisor_answer|length > 100 %}…{% endif %}</small>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">No resolved requests yet</div>
+    {% endif %}
+  </section>
+
+  <!-- Knowledge -->
+  <section class="mb-5">
+    <h5 class="fw-bold mb-3"><i class="fa-solid fa-brain text-info me-2"></i>Recent Knowledge</h5>
+    {% if knowledge_entries %}
+      <div class="row g-3">
+        {% for k in knowledge_entries %}
+        <div class="col-lg-6">
+          <div class="card request-card knowledge p-3">
+            <div class="fw-semibold mb-1">Q: {{ k.question[:100] }}{% if k.question|length > 100 %}…{% endif %}</div>
+            <small class="text-muted">A: {{ k.answer[:100] }}{% if k.answer|length > 100 %}…{% endif %}</small>
+            <div class="mt-2"><span class="badge bg-secondary">Used {{ k.usage_count }}×</span></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="text-center mt-4"><a href="/knowledge" class="btn btn-outline-info btn-sm">View All Knowledge</a></div>
+    {% else %}
+      <div class="empty-state">No knowledge entries yet</div>
+    {% endif %}
+  </section>
+
+  <!-- Simulation -->
+  <section>
+    <h5 class="fw-bold mb-3"><i class="fa-solid fa-flask text-warning me-2"></i>Simulation Tools</h5>
+    <div class="card">
+      <div class="card-body">
+        <div class="row g-3 align-items-center">
+          <div class="col-md-9">
+            <input id="simulateQuestion" type="text" class="form-control" placeholder="Ask something the AI won’t know (e.g. ‘Do you offer keratin treatments?’)">
+          </div>
+          <div class="col-md-3 d-grid">
+            <button onclick="simulateCall()" class="btn btn-warning"><i class="fa-solid fa-phone me-2"></i>Simulate Call</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  function simulateCall(){
+    const q=document.getElementById('simulateQuestion').value||'Do you offer keratin treatments?';
+    fetch('/simulate-call',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})})
+      .then(r=>r.json())
+      .then(d=>{
+        if(d.success){alert('Call simulated! Check the supervisor console.'); location.reload();}
+        else{alert('Error: '+d.error);}
+      })
+      .catch(err=>alert('Network error: '+err));
+  }
+  // auto refresh
+  setInterval(()=>location.reload(),30000);
+</script>
+</body>
+</html>

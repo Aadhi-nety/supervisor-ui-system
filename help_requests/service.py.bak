@@ -1,0 +1,137 @@
+﻿import asyncio
+import json
+import logging
+from typing import List, Optional
+from datetime import datetime
+import redis
+
+from .models import HelpRequest, RequestStatus
+from config import Config
+
+logger = logging.getLogger(__name__)
+
+class HelpRequestService:
+    def __init__(self, redis_url: str = None):
+        self.redis_url = redis_url or Config.REDIS_URL
+        self.redis = redis.from_url(self.redis_url, decode_responses=True)
+        self.request_timeout = Config.REQUEST_TIMEOUT_MINUTES * 60
+    
+    async def create_help_request(self, customer_phone: str, question: str, context: str = '') -> HelpRequest:
+        help_request = HelpRequest(
+            customer_phone=customer_phone,
+            question=question,
+            context=context,
+            timeout_minutes=Config.REQUEST_TIMEOUT_MINUTES
+        )
+        
+        key = f'help_request:{help_request.id}'
+        self.redis.setex(
+            key, 
+            self.request_timeout,
+            json.dumps(help_request.to_dict())
+        )
+        
+        self.redis.lpush('help_requests:pending', help_request.id)
+        
+        logger.info(f'Created help request {help_request.id} for {customer_phone}')
+        return help_request
+    
+    async def get_help_request(self, request_id: str) -> Optional[HelpRequest]:
+        key = f'help_request:{request_id}'
+        data = self.redis.get(key)
+        
+        if not data:
+            return None
+        
+        try:
+            request_data = json.loads(data)
+            return self._dict_to_help_request(request_data)
+        except json.JSONDecodeError as e:
+            logger.error(f'Error decoding help request {request_id}: {e}')
+            return None
+    
+    async def get_pending_requests(self) -> List[HelpRequest]:
+        pending_ids = self.redis.lrange('help_requests:pending', 0, -1)
+        requests = []
+        
+        for request_id in pending_ids:
+            request = await self.get_help_request(request_id)
+            if request:
+                if request.is_timed_out():
+                    request.mark_timeout()
+                    await self.update_help_request(request)
+                elif request.status == RequestStatus.PENDING:
+                    requests.append(request)
+        
+        return sorted(requests, key=lambda x: x.created_at, reverse=True)
+    
+    async def get_resolved_requests(self) -> List[HelpRequest]:
+        requests = []
+        pattern = 'help_request:*'
+        
+        for key in self.redis.scan_iter(pattern):
+            if key.startswith('help_request:'):
+                data = self.redis.get(key)
+                if data:
+                    try:
+                        request_data = json.loads(data)
+                        request = self._dict_to_help_request(request_data)
+                        if request.status in [RequestStatus.RESOLVED, RequestStatus.UNRESOLVED, RequestStatus.TIMEOUT]:
+                            requests.append(request)
+                    except json.JSONDecodeError:
+                        continue
+        
+        return sorted(requests, key=lambda x: x.resolved_at or x.created_at, reverse=True)
+    
+    async def update_help_request(self, help_request: HelpRequest):
+        key = f'help_request:{help_request.id}'
+        
+        self.redis.setex(
+            key,
+            self.request_timeout,
+            json.dumps(help_request.to_dict())
+        )
+        
+        if help_request.status == RequestStatus.PENDING:
+            if not self.redis.lpos('help_requests:pending', help_request.id):
+                self.redis.lpush('help_requests:pending', help_request.id)
+        else:
+            self.redis.lrem('help_requests:pending', 0, help_request.id)
+    
+    async def resolve_request(self, request_id: str, answer: str) -> HelpRequest:
+        help_request = await self.get_help_request(request_id)
+        if not help_request:
+            raise ValueError(f'Help request {request_id} not found')
+        
+        help_request.resolve(answer)
+        await self.update_help_request(help_request)
+        
+        logger.info(f'Resolved help request {request_id}')
+        return help_request
+    
+    async def mark_request_unresolved(self, request_id: str) -> HelpRequest:
+        help_request = await self.get_help_request(request_id)
+        if not help_request:
+            raise ValueError(f'Help request {request_id} not found')
+        
+        help_request.mark_unresolved()
+        await self.update_help_request(help_request)
+        
+        logger.info(f'Marked help request {request_id} as unresolved')
+        return help_request
+    
+    def _dict_to_help_request(self, data: dict) -> HelpRequest:
+        created_at = datetime.fromisoformat(data['created_at']) if data['created_at'] else datetime.utcnow()
+        resolved_at = datetime.fromisoformat(data['resolved_at']) if data['resolved_at'] else None
+        
+        return HelpRequest(
+            id=data['id'],
+            customer_phone=data['customer_phone'],
+            question=data['question'],
+            context=data.get('context', ''),
+            status=RequestStatus(data['status']),
+            created_at=created_at,
+            resolved_at=resolved_at,
+            supervisor_answer=data.get('supervisor_answer'),
+            timeout_minutes=data.get('timeout_minutes', 60)
+        )

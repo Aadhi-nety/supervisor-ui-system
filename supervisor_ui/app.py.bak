@@ -1,0 +1,160 @@
+﻿from flask import Flask, render_template, request, jsonify, redirect, url_for
+import asyncio
+import logging
+from help_requests.service import HelpRequestService
+from knowledge_base.service import KnowledgeBaseService
+from ai_agent.simple_groq_agent import SimpleGroqAgent
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+help_service = HelpRequestService()
+kb_service = KnowledgeBaseService()
+ai_agent = SimpleGroqAgent()
+
+def run_async(coro):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+@app.route('/')
+def dashboard():
+    try:
+        pending_requests = run_async(help_service.get_pending_requests())
+        resolved_requests = run_async(help_service.get_resolved_requests())[:10]
+        knowledge_entries = run_async(kb_service.get_all_entries())[:10]
+        
+        stats = {
+            'pending': len(pending_requests),
+            'resolved': len(resolved_requests),
+            'knowledge_entries': len(knowledge_entries)
+        }
+        
+        return render_template('dashboard.html', 
+                             pending_requests=pending_requests,
+                             resolved_requests=resolved_requests,
+                             knowledge_entries=knowledge_entries,
+                             stats=stats)
+    except Exception as e:
+        logger.error(f'Error loading dashboard: {e}')
+        return render_template('error.html', error=str(e))
+
+@app.route('/requests')
+def all_requests():
+    try:
+        pending_requests = run_async(help_service.get_pending_requests())
+        resolved_requests = run_async(help_service.get_resolved_requests())
+        
+        return render_template('all_requests.html', 
+                             pending_requests=pending_requests,
+                             resolved_requests=resolved_requests)
+    except Exception as e:
+        logger.error(f'Error loading requests: {e}')
+        return render_template('error.html', error=str(e))
+
+@app.route('/request/<request_id>')
+def view_request(request_id):
+    try:
+        help_request = run_async(help_service.get_help_request(request_id))
+        if not help_request:
+            return render_template('error.html', error='Request not found'), 404
+        
+        return render_template('request_detail.html', request=help_request)
+    except Exception as e:
+        logger.error(f'Error loading request {request_id}: {e}')
+        return render_template('error.html', error=str(e)), 500
+
+@app.route('/api/requests/<request_id>/resolve', methods=['POST'])
+def resolve_request(request_id):
+    try:
+        answer = request.json.get('answer')
+        if not answer:
+            return jsonify({'error': 'Answer required'}), 400
+        
+        help_request = run_async(help_service.resolve_request(request_id, answer))
+        
+        run_async(kb_service.add_entry(help_request.question, answer))
+        
+        run_async(ai_agent.handle_supervisor_response(request_id, answer))
+        
+        return jsonify({
+            'success': True, 
+            'request': help_request.to_dict(),
+            'message': 'Request resolved and customer notified'
+        })
+    
+    except Exception as e:
+        logger.error(f'Error resolving request {request_id}: {e}')
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/requests/<request_id>/unresolved', methods=['POST'])
+def mark_unresolved(request_id):
+    try:
+        help_request = run_async(help_service.mark_request_unresolved(request_id))
+        return jsonify({'success': True, 'request': help_request.to_dict()})
+    
+    except Exception as e:
+        logger.error(f'Error marking request {request_id} as unresolved: {e}')
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/knowledge')
+def knowledge_base():
+    try:
+        entries = run_async(kb_service.get_all_entries())
+        return render_template('knowledge_base.html', entries=entries)
+    except Exception as e:
+        logger.error(f'Error loading knowledge base: {e}')
+        return render_template('error.html', error=str(e))
+
+@app.route('/api/knowledge/<entry_id>/delete', methods=['POST'])
+def delete_knowledge_entry(entry_id):
+    try:
+        success = run_async(kb_service.delete_entry(entry_id))
+        if success:
+            return jsonify({'success': True, 'message': 'Entry deleted'})
+        else:
+            return jsonify({'error': 'Entry not found'}), 404
+    
+    except Exception as e:
+        logger.error(f'Error deleting knowledge entry {entry_id}: {e}')
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/simulate-call', methods=['POST'])
+def simulate_call():
+    try:
+        question = request.json.get('question', 'Do you offer keratin treatments?')
+        
+        response = run_async(ai_agent.process_message(question))
+        
+        return jsonify({
+            'success': True, 
+            'message': f'Simulated call with question: {question}',
+            'ai_response': response,
+            'note': 'Check the console for supervisor notification if AI was uncertain'
+        })
+    
+    except Exception as e:
+        logger.error(f'Error simulating call: {e}')
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/test-ai', methods=['POST'])
+def test_ai():
+    try:
+        message = request.json.get('message', 'Hello')
+        response = run_async(ai_agent.process_message(message))
+        
+        return jsonify({
+            'success': True,
+            'user_message': message,
+            'ai_response': response
+        })
+    
+    except Exception as e:
+        logger.error(f'Error testing AI: {e}')
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    logger.info('Starting Supervisor UI on http://localhost:5000')
+    logger.info('Using Groq AI Agent')
+    app.run(debug=True, port=5000, host='0.0.0.0')

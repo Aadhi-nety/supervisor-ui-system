@@ -1,0 +1,97 @@
+﻿import asyncio
+import logging
+import threading
+import webbrowser
+
+from ai_agent.simple_groq_agent import SimpleGroqAgent
+from help_requests.service import HelpRequestService
+from knowledge_base.service import KnowledgeBaseService
+from supervisor_ui.app import app as ui_app
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('ai_supervisor.log', encoding='utf-8')
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+
+class AISupervisorSystem:
+    def __init__(self):
+        self.help_service = HelpRequestService()
+        self.kb_service = KnowledgeBaseService()
+        self.ai_agent = SimpleGroqAgent()
+        self.ui_thread = None
+
+    def start_supervisor_ui(self):
+        """Start the Flask supervisor UI in a separate thread"""
+        logger.info('Starting Supervisor UI on http://localhost:5000')
+        ui_app.run(debug=False, port=5000, host='0.0.0.0', use_reloader=False)
+
+    async def start_ai_agent(self):
+        """Start the AI agent"""
+        logger.info('Starting Groq AI Agent...')
+        while True:
+            await asyncio.sleep(1)
+
+    async def initialize_system(self):
+        """Initialize the system with sample data"""
+        logger.info('Initializing system with sample data...')
+
+        sample_knowledge = [
+            ('what are your hours', 'We are open Monday-Friday 9AM-7PM and Saturday 10AM-5PM'),
+            ('do you take walk ins', 'Yes, we accept walk-ins but appointments are recommended'),
+            ('what services do you offer', 'We offer haircuts, coloring, styling, manicures, pedicures, and spa treatments'),
+            ('where are you located', 'We are located at 123 Beauty Street, Pleasantville'),
+        ]
+
+        for question, answer in sample_knowledge:
+            try:
+                await self.kb_service.add_entry(question, answer, 'initial')
+                logger.info(f'Added sample: {question}')
+            except Exception as e:
+                logger.warning(f'Could not add sample knowledge: {e}')
+
+    async def run(self):
+        """Main system runner"""
+        logger.info('Starting Frontdesk AI Supervisor System')
+
+        await self.initialize_system()
+
+        # Start UI in separate thread
+        self.ui_thread = threading.Thread(target=self.start_supervisor_ui, daemon=True)
+        self.ui_thread.start()
+
+        await asyncio.sleep(2)
+
+        try:
+            webbrowser.open('http://localhost:5000')
+        except Exception:
+            logger.info('Supervisor UI: http://localhost:5000')
+
+        logger.info('System is running!')
+        logger.info('AI Agent: Ready with Groq')
+        logger.info('Supervisor UI: http://localhost:5000')
+
+        await self.start_ai_agent()
+
+
+def main():
+    """Main entry point"""
+    system = AISupervisorSystem()
+
+    try:
+        asyncio.run(system.run())
+    except KeyboardInterrupt:
+        logger.info('Shutting down AI Supervisor System')
+    except Exception as e:
+        logger.error(f'System error: {e}')
+        raise
+
+
+if __name__ == '__main__':
+    main()

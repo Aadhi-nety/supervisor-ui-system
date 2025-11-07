@@ -1,0 +1,36 @@
+from datetime import datetime
+from typing import Optional
+
+class KnowledgeBaseEntry:
+    def __init__(
+        self, 
+        question: str, 
+        answer: str, 
+        source: str = "supervisor",
+        id: Optional[str] = None,
+        created_at: Optional[datetime] = None, 
+        usage_count: int = 0,
+        last_used: Optional[datetime] = None
+    ):
+        self.id = id or f"kb_{hash(question) & 0xFFFFFFFF}"
+        self.question = question.lower().strip()
+        self.answer = answer
+        self.source = source
+        self.created_at = created_at or datetime.utcnow()
+        self.usage_count = usage_count
+        self.last_used = last_used or created_at or datetime.utcnow()
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "question": self.question,
+            "answer": self.answer,
+            "source": self.source,
+            "created_at": self.created_at.isoformat(),
+            "usage_count": self.usage_count,
+            "last_used": self.last_used.isoformat()
+        }
+    
+    def increment_usage(self):
+        self.usage_count += 1
+        self.last_used = datetime.utcnow()

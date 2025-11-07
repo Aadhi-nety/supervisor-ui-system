@@ -1,0 +1,110 @@
+﻿import json
+import logging
+import redis
+from typing import List, Optional
+from datetime import datetime
+
+from .models import KnowledgeBaseEntry
+from config import Config
+
+logger = logging.getLogger(__name__)
+
+class KnowledgeBaseService:
+    def __init__(self, redis_url: str = None):
+        self.redis_url = redis_url or Config.REDIS_URL
+        self.redis = redis.from_url(self.redis_url, decode_responses=True)
+    
+    async def add_entry(self, question: str, answer: str, source: str = 'supervisor') -> KnowledgeBaseEntry:
+        entry = KnowledgeBaseEntry(question, answer, source)
+        
+        key = f'knowledge:{entry.id}'
+        self.redis.set(key, json.dumps(entry.to_dict()))
+        
+        self.redis.sadd('knowledge:index', key)
+        
+        logger.info(f'Added knowledge base entry: {entry.id}')
+        return entry
+    
+    async def find_answer(self, question: str) -> Optional[str]:
+        normalized_question = self._normalize_question(question)
+        
+        entry = await self._find_matching_entry(normalized_question)
+        
+        if entry:
+            entry.increment_usage()
+            self.redis.set(f'knowledge:{entry.id}', json.dumps(entry.to_dict()))
+            return entry.answer
+        
+        return None
+    
+    async def _find_matching_entry(self, question: str) -> Optional[KnowledgeBaseEntry]:
+        index_keys = self.redis.smembers('knowledge:index')
+        
+        for key in index_keys:
+            data = self.redis.get(key)
+            if data:
+                try:
+                    entry_data = json.loads(data)
+                    if entry_data['question'] == question:
+                        return self._dict_to_kb_entry(entry_data)
+                except (json.JSONDecodeError, KeyError):
+                    continue
+        
+        for key in index_keys:
+            data = self.redis.get(key)
+            if data:
+                try:
+                    entry_data = json.loads(data)
+                    entry_question = entry_data['question']
+                    question_words = set(question.split())
+                    entry_words = set(entry_question.split())
+                    
+                    if len(question_words.intersection(entry_words)) >= 2:
+                        return self._dict_to_kb_entry(entry_data)
+                except (json.JSONDecodeError, KeyError):
+                    continue
+        
+        return None
+    
+    async def get_all_entries(self) -> List[KnowledgeBaseEntry]:
+        entries = []
+        index_keys = self.redis.smembers('knowledge:index')
+        
+        for key in index_keys:
+            data = self.redis.get(key)
+            if data:
+                try:
+                    entry_data = json.loads(data)
+                    entries.append(self._dict_to_kb_entry(entry_data))
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.error(f'Error parsing knowledge base entry {key}: {e}')
+                    continue
+        
+        return sorted(entries, key=lambda x: x.last_used, reverse=True)
+    
+    async def delete_entry(self, entry_id: str) -> bool:
+        key = f'knowledge:{entry_id}'
+        result = self.redis.delete(key)
+        self.redis.srem('knowledge:index', key)
+        
+        if result:
+            logger.info(f'Deleted knowledge base entry: {entry_id}')
+            return True
+        return False
+    
+    def _normalize_question(self, question: str) -> str:
+        import string
+        question = question.lower().strip()
+        question = question.translate(str.maketrans('', '', string.punctuation))
+        return ' '.join(question.split())
+    
+    def _dict_to_kb_entry(self, data: dict) -> KnowledgeBaseEntry:
+        return KnowledgeBaseEntry(
+            question=data['question'],
+            answer=data['answer'],
+            source=data.get('source', 'supervisor'),
+            id=data.get('id'),
+            created_at=datetime.fromisoformat(data['created_at']),
+            usage_count=data.get('usage_count', 0),
+            last_used=datetime.fromisoformat(data['last_used'])
+        )
